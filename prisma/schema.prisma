@@ -1,0 +1,318 @@
+// Kasi to Kasi — Prisma Schema
+// Run: npx prisma migrate dev --name init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────
+//  USERS
+// ─────────────────────────────────────────────
+
+model User {
+  id               String    @id @default(uuid())
+  name             String
+  phone            String    @unique
+  email            String?   @unique
+  passwordHash     String
+  profileImageUrl  String?
+  role             UserRole  @default(PASSENGER)
+  isDriverVerified Boolean   @default(false)
+  rating           Float     @default(5.0)
+  totalTrips       Int       @default(0)
+  fcmToken         String?
+  refreshToken     String?
+  firebaseUid      String?   @unique  // set when user authenticates via Firebase Phone Auth
+  isPhoneVerified  Boolean   @default(false)
+  isActive         Boolean   @default(true)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  // Relations
+  driverProfile    DriverProfile?
+  tripsAsPassenger Trip[]         @relation("PassengerTrips")
+  tripsAsDriver    Trip[]         @relation("DriverTrips")
+  routes           Route[]
+  couriersSent     CourierBooking[] @relation("SenderBookings")
+  payments         Payment[]
+  notifications    Notification[]
+  ratings          Rating[]       @relation("RatingsGiven")
+  ratingsReceived  Rating[]       @relation("RatingsReceived")
+
+  @@map("users")
+}
+
+enum UserRole {
+  PASSENGER
+  DRIVER
+  BOTH
+  ADMIN
+}
+
+model DriverProfile {
+  id               String   @id @default(uuid())
+  userId           String   @unique
+  user             User     @relation(fields: [userId], references: [id])
+  vehicleReg       String   @unique
+  vehicleMake      String
+  vehicleModel     String
+  vehicleColor     String
+  vehicleYear      Int?
+  taxiAssociation  String
+  licenseNumber    String   @unique
+  licenseExpiry    DateTime?
+  isOnline         Boolean  @default(false)
+  currentLat       Float?
+  currentLng       Float?
+  currentHeading   Float?
+  lastSeenAt       DateTime?
+  totalEarnings    Float    @default(0)
+  activeRouteId    String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@map("driver_profiles")
+}
+
+// ─────────────────────────────────────────────
+//  ROUTES & TRIPS
+// ─────────────────────────────────────────────
+
+model Route {
+  id                String      @id @default(uuid())
+  driverId          String
+  driver            User        @relation(fields: [driverId], references: [id])
+  originName        String
+  originAddress     String?
+  originLat         Float
+  originLng         Float
+  destinationName   String
+  destinationAddress String?
+  destinationLat    Float
+  destinationLng    Float
+  currentLat        Float?
+  currentLng        Float?
+  availableSeats    Int
+  totalSeats        Int         @default(14)
+  estimatedFare     Float       @default(0)
+  isActive          Boolean     @default(true)
+  departureTime     DateTime
+  estimatedArrival  DateTime?
+  completedAt       DateTime?
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+
+  trips             Trip[]
+
+  @@map("routes")
+}
+
+model Trip {
+  id              String      @id @default(uuid())
+  passengerId     String
+  passenger       User        @relation("PassengerTrips", fields: [passengerId], references: [id])
+  driverId        String?
+  driver          User?       @relation("DriverTrips", fields: [driverId], references: [id])
+  routeId         String?
+  route           Route?      @relation(fields: [routeId], references: [id])
+  pickupName      String
+  pickupAddress   String?
+  pickupLat       Float
+  pickupLng       Float
+  dropoffName     String
+  dropoffAddress  String?
+  dropoffLat      Float
+  dropoffLng      Float
+  status          TripStatus  @default(SEARCHING)
+  fare            Float       @default(0)
+  distanceKm      Float?
+  durationMins    Int?
+  paymentMethod   PaymentMethod @default(CASH)
+  requestedAt     DateTime    @default(now())
+  matchedAt       DateTime?
+  startedAt       DateTime?
+  completedAt     DateTime?
+  cancelledAt     DateTime?
+  cancelReason    String?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  payment         Payment?
+  rating          Rating?
+
+  @@map("trips")
+}
+
+enum TripStatus {
+  SEARCHING
+  MATCHED
+  DRIVER_EN_ROUTE
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum PaymentMethod {
+  CARD
+  CASH
+  WALLET
+}
+
+// ─────────────────────────────────────────────
+//  PAYMENTS
+// ─────────────────────────────────────────────
+
+model Payment {
+  id                String        @id @default(uuid())
+  tripId            String?       @unique
+  trip              Trip?         @relation(fields: [tripId], references: [id])
+  courierBookingId  String?       @unique
+  courierBooking    CourierBooking? @relation(fields: [courierBookingId], references: [id])
+  userId            String
+  user              User          @relation(fields: [userId], references: [id])
+  totalAmount       Float
+  driverAmount      Float         // 75%
+  platformAmount    Float         // 10%
+  workshopAmount    Float         //  8%
+  associationAmount Float         //  7%
+  method            PaymentMethod @default(CASH)
+  status            PaymentStatus @default(PENDING)
+  transactionRef    String?       @unique
+  flutterwaveRef    String?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  @@map("payments")
+}
+
+enum PaymentStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  REFUNDED
+}
+
+// ─────────────────────────────────────────────
+//  COURIER
+// ─────────────────────────────────────────────
+
+model CourierBooking {
+  id                String        @id @default(uuid())
+  senderId          String
+  sender            User          @relation("SenderBookings", fields: [senderId], references: [id])
+  recipientName     String
+  recipientPhone    String
+  pickupName        String
+  pickupAddress     String?
+  pickupLat         Float
+  pickupLng         Float
+  dropoffName       String
+  dropoffAddress    String?
+  dropoffLat        Float
+  dropoffLng        Float
+  packageSize       PackageSize   @default(SMALL)
+  packageDescription String?
+  isFragile         Boolean       @default(false)
+  estimatedFee      Float
+  status            CourierStatus @default(PENDING)
+  assignedDriverId  String?
+  trackingCode      String        @unique
+  bookedAt          DateTime      @default(now())
+  acceptedAt        DateTime?
+  collectedAt       DateTime?
+  deliveredAt       DateTime?
+  cancelledAt       DateTime?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  payment           Payment?
+
+  @@map("courier_bookings")
+}
+
+enum PackageSize {
+  SMALL
+  MEDIUM
+  LARGE
+  EXTRA_LARGE
+}
+
+enum CourierStatus {
+  PENDING
+  ACCEPTED
+  COLLECTED
+  IN_TRANSIT
+  DELIVERED
+  CANCELLED
+}
+
+// ─────────────────────────────────────────────
+//  RATINGS
+// ─────────────────────────────────────────────
+
+model Rating {
+  id          String   @id @default(uuid())
+  tripId      String   @unique
+  trip        Trip     @relation(fields: [tripId], references: [id])
+  giverId     String
+  giver       User     @relation("RatingsGiven", fields: [giverId], references: [id])
+  receiverId  String
+  receiver    User     @relation("RatingsReceived", fields: [receiverId], references: [id])
+  score       Float
+  comment     String?
+  createdAt   DateTime @default(now())
+
+  @@map("ratings")
+}
+
+// ─────────────────────────────────────────────
+//  NOTIFICATIONS
+// ─────────────────────────────────────────────
+
+model Notification {
+  id        String           @id @default(uuid())
+  userId    String
+  user      User             @relation(fields: [userId], references: [id])
+  type      NotificationType
+  title     String
+  message   String
+  isRead    Boolean          @default(false)
+  metadata  Json?
+  createdAt DateTime         @default(now())
+
+  @@map("notifications")
+}
+
+enum NotificationType {
+  TRIP_MATCHED
+  DRIVER_ARRIVING
+  TRIP_STARTED
+  TRIP_COMPLETED
+  PAYMENT_RECEIVED
+  COURIER_UPDATE
+  GENERAL
+}
+
+// ─────────────────────────────────────────────
+//  EARNINGS SNAPSHOTS (for fast dashboard queries)
+// ─────────────────────────────────────────────
+
+model EarningsSnapshot {
+  id              String   @id @default(uuid())
+  driverId        String
+  date            DateTime @db.Date
+  tripCount       Int      @default(0)
+  totalFare       Float    @default(0)
+  driverEarnings  Float    @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([driverId, date])
+  @@map("earnings_snapshots")
+}
